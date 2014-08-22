@@ -1,0 +1,77 @@
+Using Random Forest Method to Predict Quality of Weight Lifting Exercise 
+========================================================================
+
+**Data Loading & Cleaning**
+
+Raw data are read from pml-training.csv file, and all records with the column of new_window="yes" are discarded since the data in pml-testing.csv file don't contain any records with the column of new_windows ="yes". The first 7 Columns are unrelated to this study, so they are also removed.
+
+```{r  message=FALSE}
+    library(caret)
+    library(randomForest)
+    library(gbm)
+    library(RANN)
+    rawData<-read.csv("pml-training.csv",na.strings = c("NA","#DIV/0!",""))
+    rawData<-rawData[rawData$new_window == "no",]
+    cleanData<-rawData[,-(1:7)]
+```
+
+**Data Spliting**
+
+After cleanning, data set is randomly split into trianing and testing data sets. Outcomes in classe column are moved to a vector respectively.
+```{r  message=TRUE}
+    set.seed(123)
+    train_index <- createDataPartition(cleanData$classe, p = 0.7)[[1]]
+    trainData<- cleanData[train_index,]
+    testData <- cleanData[-train_index,]
+    trainData_classe<-trainData$classe
+    trainData$classe<-NULL
+    testData_classe<-testData$classe
+    testData$classe<-NULL
+```
+**Data Preprocessing**
+
+Predictors with near-zero variance are filtered. The remaining predictors are firstly centered and scaled, and then transformed using BoxCox method to resolve skewness. 5-nearest neighbor method is used to impute missing data and Principal Component Analysis is conducted for feature extration.
+```{r}
+    zeroPredictor<-nearZeroVar(trainData)
+    filteredTrainData<-trainData[,-zeroPredictor]
+    filteredTestData<-testData[,-zeroPredictor]
+
+    preprocessModel <- preProcess(filteredTrainData,
+                                  method = c("BoxCox","center", "scale", "knnImpute", "pca"),
+                                  thresh = 0.95, k = 5)
+    processedTrainData <- predict(preprocessModel, filteredTrainData)
+    processedTestData<- predict(preprocessModel, filteredTestData)
+```
+**Model Training**
+
+The prediction model is trained on preprocessed training data set by Random Forest method with repeated 5-fold cross-validation. The tuning parameter for this model is mtry, which defines how many features are randomly selected at each split. Since there are 26 principle components remaining after preprocessing, sqrt(26)=5.1, mtry values of about half the squared-root (2), the squared-root (5),twice the squared-root (10), and full set of the principle components (26) are tested.
+```{r}
+    ctrl <- trainControl(method = "repeatedcv", number = 5, repeats = 5)
+    grid_rf <- expand.grid(mtry = c(2,5,10,26))
+    model <- train(processedTrainData, trainData_classe, method = "rf",
+               trControl = ctrl, tuneGrid = grid_rf, metric = "Accuracy")
+    ggplot(model)
+```
+
+
+**Model Testing**
+
+Prediction model are tested on preprocessed testing data set. Performance of the model are summarized in confusion matrix. With repeated 5-fold cross-validation, an accuracy of over 97% is achieved and therefore the out of sample error is expected to be less than 3%.
+```{r}
+    testPrediction <- predict(model,processedTestData)
+    confusionSummary<-confusionMatrix(testData_classe,  testPrediction )
+    confusionSummary$table
+    confusionSummary$overall
+```
+
+**Model Application**
+
+The prediction Model is applied to the 20 records from pml-testing.csv file, the result is submit to the automatic grader.
+```{r}
+    appData<-read.csv("pml-testing.csv",na.strings = c("NA","#DIV/0!",""))
+    appData<-appData[,-(1:7)]
+    appData$problem_id<-NULL
+    filteredAppData<-appData[,-zeroPredictor]
+    processedAppData<- predict(preprocessModel, filteredAppData)
+    answer <- predict(model,processedAppData)
+```
